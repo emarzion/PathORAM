@@ -1382,17 +1382,17 @@ Section PORAM_PROOF.
   Qed.
 
   Lemma read_access_wf (id : block_id)(v : nat) :
-    state_plift (fun st => well_formed st /\ kv_rel id v st) (fun st => well_formed st /\ kv_rel id v st) (has_value v) (read_access id).
+    state_plift (fun st => well_formed st /\ kv_rel id v st) (fun st => well_formed st /\ kv_rel id v st) (has_value v) triv2 (read_access id).
   Proof.
     remember (fun st : state => well_formed st /\ kv_rel id v st) as Inv. 
-    apply (state_plift_bind Inv Inv).
+    eapply (state_plift_bind Inv Inv).
     - apply state_plift_get.
     - intros.
-      apply (state_plift_bind Inv (fun p => length p = LOP)).
+      eapply (state_plift_bind Inv (fun p => length p = LOP)).
       + apply state_plift_liftT.
         apply coin_flips_length.
       + intros. simpl.
-        apply (state_plift_bind Inv (fun _ => True)).
+        eapply (state_plift_bind Inv (fun _ => True)).
         * apply state_plift_put. rewrite HeqInv in H; destruct H.
           rewrite HeqInv. split.
           -- apply get_post_wb_st_wf; [|apply H].
@@ -1404,18 +1404,18 @@ Section PORAM_PROOF.
   Qed.
 
   Lemma write_access_wf (id : block_id) (v : nat) :
-    state_plift (fun st => well_formed st) (fun st => well_formed st /\ kv_rel id v st) (fun _ => True) (write_access id v).
+    state_plift (fun st => well_formed st) (fun st => well_formed st /\ kv_rel id v st) (fun _ => True) triv2 (write_access id v).
   Proof.
     remember (fun st : state => well_formed st) as Inv.
-    apply (state_plift_bind Inv Inv).
+    eapply (state_plift_bind Inv Inv).
     - apply state_plift_get.
     - intros.
       rewrite HeqInv in H.
-      apply (state_plift_bind Inv (fun p => length p = LOP)).
+      eapply (state_plift_bind Inv (fun p => length p = LOP)).
       + apply state_plift_liftT.
         apply coin_flips_length.
       + intros. simpl.
-        apply (state_plift_bind (fun st => well_formed st /\ kv_rel id v st) (fun _ => True)).
+        eapply (state_plift_bind (fun st => well_formed st /\ kv_rel id v st) (fun _ => True)).
         * apply state_plift_put; simpl; split.
           apply get_post_wb_st_wf; auto.
           -- apply get_pre_wb_st_wf; auto. destruct x; exact H.
@@ -1426,10 +1426,10 @@ Section PORAM_PROOF.
   Qed.
 
   Lemma write_and_read_access_lift (id : block_id)(v : nat):
-    state_plift (well_formed) well_formed (has_value v)
+    state_plift (well_formed) well_formed (has_value v) triv2
       (write_and_read_access id v).
   Proof.
-    apply (state_plift_bind
+    eapply (state_plift_bind
              (fun st => well_formed st /\ kv_rel id v st)
              (fun _ => True)).
     - eapply write_access_wf.
@@ -1441,7 +1441,7 @@ Section PORAM_PROOF.
   Qed.
 
   Lemma extract_payload (id : block_id) (v : nat) (s : state) : 
-    plift (fun '(x, s') => has_value v x /\ well_formed s') (write_and_read_access id v s) -> 
+    plift (fun '(x, s') => has_value v x /\ triv2 x s' /\ well_formed s') (write_and_read_access id v s) -> 
     get_payload (write_and_read_access id v s) = v.
   Proof.
     intros ops_on_s.
@@ -1579,10 +1579,11 @@ Section PORAM_PROOF.
   Qed.
   
   Lemma write_access_neq : forall i k v v',
-      i <> k -> 
+      i <> k ->
       state_plift (fun s : state => well_formed s /\ kv_rel i v' s)
         (fun st : state => well_formed st /\ kv_rel i v' st)
-        (fun _ =>  True)
+        triv
+        triv2
         (write_access k v).
   Proof.
     intros.
@@ -1598,6 +1599,7 @@ Section PORAM_PROOF.
         eapply state_plift_bind.
         2:{ intros.
             apply state_plift_ret; auto.
+            unfold triv; auto.
         }
         apply state_plift_put.
         split.
@@ -1617,6 +1619,7 @@ Section PORAM_PROOF.
         (fun s => well_formed s /\ kv_rel i v' s)
         (fun s => well_formed s /\ kv_rel i v' s)
         (has_value v')
+        triv2
         (_ <- write_access k v ;; read_access i).
   Proof.
     intros.
@@ -1627,22 +1630,25 @@ Section PORAM_PROOF.
 
   Lemma value_pred_weaken :
     forall {X} (S : Type) (M : Type -> Type) `{PredLift M}
-      (Pre Post: S -> Prop) (P Q : X -> Prop),
+      (Pre Post: S -> Prop) (P Q : X -> Prop)
+      (R : X -> S -> Prop),
       (forall x, P x -> Q x) ->
       has_weakening M ->
-      forall m, state_plift Pre Post P m ->
-           state_plift Pre Post Q m.
+      forall m, state_plift Pre Post P R m ->
+           state_plift Pre Post Q R m.
   Proof.
     intros.
     unfold state_plift.
     intros.
     specialize (H3 s H4).
     unfold has_weakening in H2.
-    apply H2 with (P := (fun '(x, s') => P x /\ Post s')).
-    - intros. destruct x.  destruct H5. split. apply H1; tauto. auto.
+    apply H2 with (P := (fun '(x, s') => P x /\ R x s' /\ Post s')).
+    - intros. destruct x.
+      destruct H5 as [pf1 [pf2 pf3]].
+      repeat split; auto.
     - auto.
   Qed.
-  
+
 End PORAM_PROOF.
 
 Require Import Lia RAM.
@@ -1734,10 +1740,11 @@ Module PathORAM (C : ConfigParams)<: RAM (Dist_State).
       | Some x => P x
       end.
 
-  Lemma lift_payload {Pre Post : state -> Prop} {P : nat -> Prop} 
+  Lemma lift_payload {Pre Post : state -> Prop}
+    {P : nat -> Prop} {R : path * nat -> state -> Prop}
     (m : Poram (path * nat)) s :
     Pre s ->
-    state_plift Pre Post (fun '(_,x) => P x) m ->
+    state_plift Pre Post (fun '(_,x) => P x) R m ->
     opt_lift P (get_payload (m s)).
   Proof.
     intros Hs Hm.
@@ -1855,3 +1862,49 @@ Module PathORAM (C : ConfigParams)<: RAM (Dist_State).
   Admitted. 
 
 End PathORAM.
+
+Section NewProofs.
+
+Context `{C : Config}.
+
+Lemma kv_rel_read : forall k v k',
+  state_plift
+    (fun st => well_formed st /\ kv_rel k v st)
+    (fun st => well_formed st /\ kv_rel k v st)
+    triv
+    triv2
+    (read_access k').
+Proof.
+Admitted.
+
+Lemma kv_rel_read_eq : forall k v,
+  state_plift
+    (fun st => well_formed st /\ kv_rel k v st)
+    (fun st => well_formed st /\ kv_rel k v st)
+    (has_value v)
+    triv2
+    (read_access k).
+Proof.
+Admitted.
+
+Lemma kv_rel_write_neq : forall k v k' v',
+  k <> k' ->
+  state_plift
+    (fun st => well_formed st /\ kv_rel k v st)
+    (fun st => well_formed st /\ kv_rel k v st)
+    triv
+    triv2
+    (write_access k' v').
+Proof.
+Admitted.
+
+Lemma kv_rel_write_eq : forall k v,
+  state_plift
+    well_formed
+    (fun st => well_formed st /\ kv_rel k v st)
+    triv
+    triv2
+    (write_access k v).
+Proof.
+Admitted.
+
